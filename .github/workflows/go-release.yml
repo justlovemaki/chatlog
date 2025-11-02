@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    # 触发条件：当推送到 main 分支且 'version' 文件发生变更时
+    branches:
+      - main
+    paths:
+      - 'version'
+
+jobs:
+  release:
+    name: Release Binary
+    runs-on: ubuntu-latest
+    container:
+      image: goreleaser/goreleaser-cross:v1.24
+    permissions:
+      # contents: write 是必须的，因为它需要创建 Release 和推送标签
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 必须检出完整历史，以便 GoReleaser 生成版本日志
+          fetch-depth: 0
+      
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # ===================================================================
+      #  新增步骤：如果是由 version 文件触发，则自动读取版本并创建标签
+      # ===================================================================
+      - name: Create Tag from version file
+        # 这个 'if' 条件是关键：仅当触发事件是推送到分支时才运行
+        # 如果是手动推送标签触发的，则跳过此步骤
+        if: startsWith(github.ref, 'refs/heads/')
+        run: |
+          # 配置 git 用户，否则无法推送标签
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # 从 'version' 文件中读取版本号，并去除可能存在的空格
+          VERSION=$(cat version | tr -d '[:space:]')
+          
+          # 检查版本号是否为空
+          if [ -z "$VERSION" ]; then
+            echo "Error: version file is empty."
+            exit 1
+          fi
+          
+          echo "Version from file: ${VERSION}"
+          
+          # 创建并推送标签
+          # git tag "$VERSION"
+          # git push origin "$VERSION"
+
+          # 更好的做法：使用 API 创建，避免 CI 推送的复杂性
+          # 但是直接推送标签更直观，我们先用这种方式
+          # 如果遇到权限问题，可以换成 gh cli
+          git tag $VERSION
+          git push origin $VERSION
+      
+      - name: Install UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          install-only: true
+
+      - name: Run GoReleaser
+        # 现在不再需要 --skip=validate 或 --snapshot
+        # 因为上面的步骤确保了在运行时总会有一个有效的标签
+        run: goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
